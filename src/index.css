@@ -72,3 +72,26 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* Leaflet: keep map controls readable on dark, and soften OSM tiles in dark mode. */
+.leaflet-container {
+  font-family: var(--font-sans);
+  background: var(--surface-2);
+}
+.dark .leaflet-tile-pane {
+  filter: invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9);
+}
+.ft-pin {
+  background: none;
+  border: 0;
+}
+.ft-pin:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+  border-radius: 9999px;
+}
+.leaflet-control-zoom a {
+  min-width: 44px;
+  min-height: 44px;
+  line-height: 44px !important;
+}
