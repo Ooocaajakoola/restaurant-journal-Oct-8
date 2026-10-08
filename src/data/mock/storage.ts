@@ -1,5 +1,6 @@
 /**
- * The ONLY place in the app that touches localStorage.
+ * The only place journal data touches localStorage. (The theme preference is stored separately by
+ * Zustand's persist middleware in src/store/uiStore.ts, mirrored by a boot script in index.html.)
  * Wrapped in a tiny interface so tests (and private-mode browsers) can use memory.
  */
 export interface KeyValueStore {
