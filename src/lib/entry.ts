@@ -1,6 +1,10 @@
-import type { Entry, EntryView } from '../types';
+import type { Entry } from '../types';
 
-type DetailFields = Pick<EntryView, 'dishes' | 'note' | 'price'>;
+interface DetailFields {
+  dishes: readonly unknown[];
+  note: string;
+  price: number | null;
+}
 
 /** True when the entry has any detail beyond the place and rating. */
 export function hasDetails(e: DetailFields): boolean {
