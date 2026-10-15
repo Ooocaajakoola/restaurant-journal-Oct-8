@@ -2,7 +2,7 @@
 
 A mobile-first restaurant journal for pilots and other frequent travellers. Log a meal in about three taps, find it again by city, and share favourites by link.
 
-**Status: front end only.** There is no back end, no auth, no payments and no analytics. Data lives in your browser (localStorage) behind a repository layer, so a Supabase back end can be added by changing one file. See [Plugging in Supabase](#plugging-in-supabase).
+**Status: connected to Supabase.** Data is stored in a Supabase Postgres database behind a repository layer. With no Supabase settings the app falls back to localStorage demo data (see [Backend](#backend-supabase)). There are no payments and no analytics, and no login screen: each browser gets its own private identity through Supabase anonymous sign-in.
 
 ## Stack
 
@@ -14,8 +14,11 @@ Requires Node 20+.
 
 ```bash
 npm install
-npm run dev        # http://localhost:5173
+cp .env.example .env   # then fill in the two Supabase values (see Backend)
+npm run dev            # http://localhost:5173
 ```
+
+Without a `.env` (or with the placeholder values) the app runs on localStorage demo data, so it works offline out of the box.
 
 | Command | What it does |
 | --- | --- |
@@ -27,9 +30,9 @@ npm run dev        # http://localhost:5173
 | `npm test` | Run all tests once |
 | `npm run test:watch` | Tests in watch mode |
 
-On first load the app seeds sample data: 10 cities, 27 places and 40 entries, plus a few lists. To start over, clear this site's data in your browser's dev tools (Application → Local Storage → delete `food-tower:db`) and reload.
+**Demo mode (no Supabase settings):** on first load the app seeds sample data: 10 cities, 27 places, 40 entries and a few lists. To start over, delete `food-tower:db` under Application → Local Storage and reload. The mocked "current location" is Soho, London, and you can open `/l/list-ana-lisbon` to try the shared-list page.
 
-The mocked "current location" is Soho, London, so Quick Log suggests London places. Open a shared list at `/l/list-ana-lisbon` to try the read-only page and **Save to my journal**.
+**Supabase mode:** your journal starts empty, with the 10 cities and 27 places as a shared catalogue. Quick Log uses your browser's real location and picks the nearest catalogue city.
 
 ## Screens
 
@@ -62,9 +65,10 @@ src/
   types/        Domain types: User, Place, City, Entry, Dish, Photo, Tag, List, ListItem
   data/
     repositories.ts   ★ The interfaces (EntryRepository, PlaceRepository, ...). The contract.
-    index.ts          ★ The ONE file that chooses the implementation.
-    mock/             localStorage implementation + seed data (what runs today)
-    supabase/         Empty placeholder for the Supabase implementation
+    index.ts          ★ The ONE file that chooses the implementation (by env).
+    mock/             localStorage implementation + seed data (demo mode and tests)
+    supabase/         Supabase implementation (what runs when configured)
+    entryFilter.ts    Shared definition of what an entry filter means
     contract/         Behaviour tests any implementation must pass
   hooks/        useRepositories (context), useAsyncData, useShare
   store/        Zustand: theme preference (persisted) and a refetch counter
@@ -88,53 +92,43 @@ The only other `localStorage` use is the **theme preference** (Zustand's `persis
 - Form state is local to each form.
 - Zustand holds only the theme and that refetch counter.
 
-## Plugging in Supabase
+## Backend (Supabase)
 
-Nothing Supabase-related is installed yet. When you're ready:
+The database schema, security policies, photo bucket and catalogue seed live in `supabase/migrations/` (already applied to the project). The app code is in `src/data/supabase/`, one file per repository interface, and `src/data/index.ts` picks it.
 
-1. **Install the client and set env vars**
-   ```bash
-   npm install @supabase/supabase-js
-   cp .env.example .env     # fill in VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
-   ```
+**How it picks a back end.** `src/data/index.ts` uses Supabase when both `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are set, and the localStorage mock otherwise. Set `VITE_DATA_SOURCE=mock` to force the mock. Nothing outside `src/data/` knows which one it got.
 
-2. **Implement the interfaces** in `src/data/supabase/`, one file per repository, mirroring `src/data/mock/`:
-   `UserRepository`, `CityRepository`, `PlaceRepository`, `EntryRepository`, `TagRepository`, `ListRepository`, `LocationRepository` (all in `src/data/repositories.ts`). Export one function:
-   ```ts
-   export function createSupabaseRepositories(client: SupabaseClient): Repositories
-   ```
-   Things to handle in that layer (the UI already expects them):
-   - **Joins**: `EntryView` and `ListView` are joined shapes (place + city + dishes + photos + tags). Build them with Supabase's nested selects.
-   - **Naming**: map `snake_case` columns to the camelCase fields in `src/types/`.
-   - **Photos**: upload to Supabase Storage and store the URL in `Photo.url` (the mock stores a downsized data URL).
-   - **Current user**: the mock has a fixed current user. Take it from the Supabase session instead (`UserRepository.getCurrent`), and filter entries and lists by it (or use row-level security).
-   - **Shared lists**: `ListRepository.getShared(id)` must work for people who aren't the owner. Use an RLS policy on `shareEnabled = true` or a small RPC. `saveCopyToMyJournal` copies the list and its items into the caller's account.
-   - **Location**: replace the mock `LocationRepository` with `navigator.geolocation` plus nearest-city lookup.
-   - **Nearby and search**: `listNearby` and `search` run client-side in the mock. Use PostGIS or a `RETURNS TABLE` function when the catalogue grows.
-   - **Ids and sync**: ids are client-generated UUIDs. Use them as primary keys and upsert on `updatedAt` for offline sync.
+**One manual step in the Supabase dashboard.** Turn on *Authentication → Sign In / Providers → Allow anonymous sign-ins*. Until you do, the app shows "Can't connect to your journal" with this instruction.
 
-3. **Switch over: change one file.** Edit `src/data/index.ts`:
-   ```ts
-   import { createClient } from '@supabase/supabase-js';
-   import { createSupabaseRepositories } from './supabase';
+**Identity and privacy.** On first load each browser signs in anonymously and gets its own `auth.uid()`. Row-level security means:
 
-   export const repositories: Repositories = createSupabaseRepositories(
-     createClient(import.meta.env.VITE_SUPABASE_URL, import.meta.env.VITE_SUPABASE_ANON_KEY),
-   );
-   ```
-   Nothing in `components/`, `pages/`, `hooks/` or `store/` changes. If you'd like to keep the mock for demos, pick the implementation from an env flag in that same file.
+| Data | Who can read | Who can write |
+| --- | --- | --- |
+| Cities, places | Everyone | Signed-in users may add places; cities are managed in SQL |
+| Entries, dishes, photos, tags, profile | Only the owner | Only the owner |
+| Lists | The owner, and anyone with the link while `share_enabled` | Only the owner |
+| Photo files (`entry-photos` bucket) | Anyone with the file's unguessable URL | Only the owner, in their own folder |
 
-4. **Prove it behaves the same**: run the shared contract against the new implementation.
-   ```ts
-   // src/data/supabase/supabase.test.ts
-   import { runRepositoryContract } from '../contract/repositoryContract';
-   runRepositoryContract('supabase', async () => ({ repos: await makeSeededTestRepositories() }));
-   ```
-   The contract assumes the seed data (10 cities, the London places, `list-ana-lisbon`, etc.), so point it at a test project loaded with the same seed (`src/data/mock/seed.ts` is the reference).
+Because there is no login, an anonymous identity lives in that browser. Clearing site data or switching browsers starts a fresh, empty journal, and the old data stays in the database but is unreachable. Adding real sign-in later (and linking the anonymous user to it) is the natural next step for cross-device sync.
+
+**Schema notes.** Ids are client-generated UUIDs, and every table has `created_at`/`updated_at`. A shared list copies each entry's rating onto the list item, so viewers see the rating without ever getting access to the entry. A list also stores a snapshot of its owner's name.
+
+**Changing the schema.** Add a new file in `supabase/migrations/` and apply it (Supabase CLI, or the dashboard SQL editor). Don't edit applied files.
+
+### Tests
+
+- `npm test` runs everything that doesn't need the network, including unit tests for the Supabase layer (row mapping, session handling, query helpers) and the shared repository contract against the mock.
+- `src/data/supabase/supabase.e2e.test.ts` runs the real Supabase repositories against your live project with two anonymous users: CRUD, photo upload, filters, per-user privacy, shared lists. It is skipped by default because it creates (and then deletes) data:
+  ```bash
+  SUPABASE_E2E=1 npm test -- supabase.e2e
+  ```
+  Each run leaves a couple of empty anonymous users in Authentication → Users; delete them in the dashboard if you like.
 
 ## Notes and limits
 
 - **Map tiles** come from the public OpenStreetMap tile server, which is fine for development and light use. For production traffic use a tile provider (and update the attribution) in `src/components/map/EntryMap.tsx`.
-- **localStorage is small** (about 5 MB). Photos are downsized to ~1024px JPEG before saving. If storage fills up, saving shows a clear error instead of failing silently.
-- Sharing is mock-only: a share link works inside the same browser, because the data lives there. It will work for other people once Supabase is connected.
+- **Photos** are downsized to ~1024px JPEG before saving. In Supabase mode they're uploaded to Storage (5 MB limit per file); in demo mode they're stored in localStorage (about 5 MB total), and a full store shows a clear error.
+- **Cities are a fixed catalogue** (10 for now). If you're more than ~150 km from all of them, Quick Log can still log at an existing place but can't add a new one. Growing the catalogue (or letting users add cities) is future work.
+- **Multi-step saves aren't one database transaction.** Saving an entry writes the entry, then its dishes, tags and photos. If a later step fails, the app deletes the half-saved entry. A Postgres function (RPC) would make it atomic.
+- **Filtering and search run in the browser** over your own entries (fine for a personal journal; Supabase returns up to 1,000 rows per request by default). Move them into SQL if journals get large.
 - Tag chips and place search are client-side and unpaginated, which is fine for a personal journal.

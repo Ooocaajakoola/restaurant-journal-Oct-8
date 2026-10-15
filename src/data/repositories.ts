@@ -203,6 +203,11 @@ export interface LocationRepository {
 // ---------- Bundle ----------
 
 export interface Repositories {
+  /**
+   * Resolves when the data layer can serve requests (e.g. a Supabase session exists) and rejects with a
+   * readable message if it can't. The app waits on this before rendering. The mock resolves immediately.
+   */
+  ready(): Promise<void>;
   users: UserRepository;
   cities: CityRepository;
   places: PlaceRepository;

@@ -31,6 +31,7 @@ export function createMockRepositories(options: MockOptions = {}): MockRepositor
   const ctx: MockContext = { db, now, newId: options.newId ?? newId };
 
   return {
+    ready: async () => {},
     users: createUserRepository(ctx),
     cities: createCityRepository(ctx),
     places: createPlaceRepository(ctx),
