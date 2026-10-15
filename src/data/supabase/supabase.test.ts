@@ -1,7 +1,8 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { boundingBox } from '../../lib/geo';
 import { escapeLike } from '../../lib/like';
-import { createSessionManager } from './session';
+import { explainAuthError, createAuthRepository } from './authRepository';
+import { createSessionManager, NotSignedInError } from './session';
 import { toEntryView, toListView, type EntryJoinRow, type ListJoinRow, type CityRow, type PlaceWithCityRow } from './rows';
 
 const stamps = { created_at: '2026-10-01T10:00:00Z', updated_at: '2026-10-02T10:00:00Z' };
@@ -76,37 +77,122 @@ describe('query helpers', () => {
   });
 });
 
+const userObj = (over: Record<string, unknown> = {}) => ({ id: 'u1', email: 'sam@example.com', user_metadata: { display_name: 'Sam' }, ...over });
+
+function fakeClient(opts: { session?: ReturnType<typeof userObj> | null } = {}) {
+  const auth = {
+    getSession: vi.fn(async () => ({ data: { session: opts.session ? { user: opts.session } : null }, error: null })),
+    signUp: vi.fn(),
+    signInWithPassword: vi.fn(),
+    signOut: vi.fn(async () => ({ error: null })),
+    resend: vi.fn(async () => ({ error: null })),
+    onAuthStateChange: vi.fn(),
+  };
+  return { client: { auth } as unknown as SupabaseClient, auth };
+}
+
 describe('session manager', () => {
-  function fakeClient(opts: { session?: boolean; anonError?: { message: string; code?: string } }) {
-    const signInAnonymously = vi.fn(async () =>
-      opts.anonError ? { data: { user: null }, error: opts.anonError } : { data: { user: { id: 'anon-1' } }, error: null },
+  it('returns the signed-in user and their sign-up name', async () => {
+    const { client } = fakeClient({ session: userObj() });
+    const s = createSessionManager(client);
+    expect(await s.ready()).toBe('u1');
+    expect(await s.current()).toEqual({ id: 'u1', email: 'sam@example.com', displayName: 'Sam' });
+  });
+
+  it('treats a leftover anonymous session as signed out', async () => {
+    const { client } = fakeClient({ session: userObj({ is_anonymous: true, email: '' }) });
+    const s = createSessionManager(client);
+    expect(await s.current()).toBeNull();
+    await expect(s.ready()).rejects.toBeInstanceOf(NotSignedInError);
+  });
+
+  it('throws NotSignedInError (and never signs in by itself) when there is no session', async () => {
+    const { client, auth } = fakeClient();
+    const s = createSessionManager(client);
+    expect(await s.current()).toBeNull();
+    await expect(s.ready()).rejects.toBeInstanceOf(NotSignedInError);
+    expect(auth.signInWithPassword).not.toHaveBeenCalled();
+  });
+});
+
+describe('auth repository', () => {
+  const make = (opts?: Parameters<typeof fakeClient>[0]) => {
+    const f = fakeClient(opts);
+    return { ...f, repo: createAuthRepository(f.client, createSessionManager(f.client)) };
+  };
+
+  it('signs up and signs in straight away when email confirmation is off', async () => {
+    const { repo, auth } = make();
+    auth.signUp.mockResolvedValue({ data: { user: userObj({ identities: [{}] }), session: { access_token: 'x' } }, error: null });
+    const res = await repo.signUp({ email: ' sam@example.com ', password: 'password1', displayName: ' Sam ' });
+    expect(res).toEqual({ status: 'signed-in', user: { id: 'u1', email: 'sam@example.com', displayName: 'Sam' } });
+    expect(auth.signUp).toHaveBeenCalledWith(
+      expect.objectContaining({ email: 'sam@example.com', password: 'password1', options: expect.objectContaining({ data: { display_name: 'Sam' } }) }),
     );
-    const getSession = vi.fn(async () => ({
-      data: { session: opts.session ? { user: { id: 'existing-1' } } : null },
-      error: null,
-    }));
-    return { client: { auth: { getSession, signInAnonymously } } as unknown as SupabaseClient, signInAnonymously, getSession };
-  }
-
-  it('reuses an existing session instead of signing in again', async () => {
-    const { client, signInAnonymously } = fakeClient({ session: true });
-    expect(await createSessionManager(client).ready()).toBe('existing-1');
-    expect(signInAnonymously).not.toHaveBeenCalled();
   });
 
-  it('signs in anonymously once and shares the result across concurrent callers', async () => {
-    const { client, signInAnonymously } = fakeClient({});
-    const s = createSessionManager(client);
-    const ids = await Promise.all([s.ready(), s.ready(), s.ready()]);
-    expect(ids).toEqual(['anon-1', 'anon-1', 'anon-1']);
-    expect(signInAnonymously).toHaveBeenCalledTimes(1);
+  it('asks the user to confirm their email when there is no session yet', async () => {
+    const { repo, auth } = make();
+    auth.signUp.mockResolvedValue({ data: { user: userObj({ identities: [{}] }), session: null }, error: null });
+    expect(await repo.signUp({ email: 'sam@example.com', password: 'password1', displayName: 'Sam' })).toEqual({
+      status: 'confirm-email',
+      email: 'sam@example.com',
+    });
   });
 
-  it('explains how to turn on anonymous sign-ins when they are disabled, and allows retry', async () => {
-    const { client, signInAnonymously } = fakeClient({ anonError: { message: 'Anonymous sign-ins are disabled', code: 'anonymous_provider_disabled' } });
-    const s = createSessionManager(client);
-    await expect(s.ready()).rejects.toThrow(/Allow anonymous sign-ins/);
-    await expect(s.ready()).rejects.toThrow(/Allow anonymous sign-ins/);
-    expect(signInAnonymously).toHaveBeenCalledTimes(2);
+  it('reports an address that is already registered (Supabase returns no identities)', async () => {
+    const { repo, auth } = make();
+    auth.signUp.mockResolvedValue({ data: { user: userObj({ identities: [] }), session: null }, error: null });
+    await expect(repo.signUp({ email: 'sam@example.com', password: 'password1', displayName: 'Sam' })).rejects.toThrow(/already exists/);
+  });
+
+  it('signs in, and explains a wrong password in plain words', async () => {
+    const { repo, auth } = make();
+    auth.signInWithPassword.mockResolvedValueOnce({ data: { user: userObj() }, error: null });
+    expect((await repo.signIn('sam@example.com', 'password1')).email).toBe('sam@example.com');
+    auth.signInWithPassword.mockResolvedValueOnce({ data: { user: null }, error: { code: 'invalid_credentials', message: 'Invalid login credentials' } });
+    await expect(repo.signIn('sam@example.com', 'nope')).rejects.toThrow('Incorrect email or password.');
+  });
+
+  it('signs out, resends confirmation, and reports auth changes until unsubscribed', async () => {
+    const { repo, auth } = make();
+    await repo.signOut();
+    expect(auth.signOut).toHaveBeenCalled();
+    await repo.resendConfirmation(' sam@example.com ');
+    expect(auth.resend).toHaveBeenCalledWith(expect.objectContaining({ type: 'signup', email: 'sam@example.com' }));
+
+    const unsubscribe = vi.fn();
+    let emit: (event: string, session: { user: ReturnType<typeof userObj> } | null) => void = () => undefined;
+    auth.onAuthStateChange.mockImplementation((cb) => {
+      emit = cb;
+      return { data: { subscription: { unsubscribe } } };
+    });
+    const seen: unknown[] = [];
+    const off = repo.onChange((u) => seen.push(u?.email ?? null));
+    emit('SIGNED_IN', { user: userObj() });
+    emit('SIGNED_OUT', null);
+    expect(seen).toEqual(['sam@example.com', null]);
+    off();
+    expect(unsubscribe).toHaveBeenCalled();
+  });
+
+  it('is an account-based repository (the mock is not)', () => {
+    expect(make().repo.accounts).toBe(true);
+  });
+});
+
+describe('explainAuthError', () => {
+  it.each([
+    ['invalid_credentials', /incorrect email or password/i],
+    ['email_not_confirmed', /confirm your email/i],
+    ['weak_password', /too weak/i],
+    ['over_email_send_rate_limit', /too many emails/i],
+    ['signup_disabled', /turned off/i],
+  ])('explains %s', (code, expected) => {
+    expect(explainAuthError({ code, message: 'raw' })).toMatch(expected);
+  });
+
+  it('falls back to the server message for anything else', () => {
+    expect(explainAuthError({ code: 'weird', message: 'Something odd' })).toBe('Something odd');
   });
 });

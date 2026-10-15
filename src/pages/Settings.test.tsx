@@ -1,7 +1,8 @@
-import { screen } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import App from '../App';
 import { useUiStore } from '../store/uiStore';
+import { createFakeAuth, SAM } from '../test/fakeAuth';
 import { createTestRepositories } from '../test/mockRepos';
 import { renderApp } from '../test/render';
 
@@ -74,5 +75,30 @@ describe('Settings', () => {
     expect(sync).toHaveTextContent('Local only');
     expect(sync).toHaveTextContent(/coming later/i);
     expect(sync).toHaveTextContent('Entries on this device');
+  });
+
+  it('hides the account section in demo mode, where there is nothing to sign in to', async () => {
+    await open();
+    expect(screen.queryByRole('region', { name: 'Account' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sign out' })).not.toBeInTheDocument();
+  });
+
+  it('shows who is signed in and signs them out', async () => {
+    const repos = Object.assign(createTestRepositories(), { auth: createFakeAuth(SAM) });
+    renderApp(<App />, { repositories: repos, route: '/settings' });
+    const account = await screen.findByRole('region', { name: 'Account' });
+    await waitFor(() => expect(account).toHaveTextContent('sam@example.com'));
+    await userEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+    expect(repos.auth.signOut).toHaveBeenCalled();
+  });
+
+  it('shows an error if signing out fails', async () => {
+    const auth = createFakeAuth(SAM);
+    auth.signOut.mockRejectedValueOnce(new Error('Network down'));
+    const repos = Object.assign(createTestRepositories(), { auth });
+    renderApp(<App />, { repositories: repos, route: '/settings' });
+    await userEvent.click(await screen.findByRole('button', { name: 'Sign out' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Network down');
+    expect(screen.getByRole('button', { name: 'Sign out' })).toBeEnabled();
   });
 });

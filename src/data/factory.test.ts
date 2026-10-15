@@ -21,7 +21,7 @@ describe('chooseDataSource', () => {
   it('builds a complete Repositories object either way', () => {
     for (const env of [{}, { VITE_SUPABASE_URL: 'https://abc.supabase.co', VITE_SUPABASE_ANON_KEY: 'k' }]) {
       const { repositories } = createRepositoriesFromEnv(env);
-      for (const key of ['ready', 'users', 'cities', 'places', 'entries', 'tags', 'lists', 'location'] as const) {
+      for (const key of ['auth', 'users', 'cities', 'places', 'entries', 'tags', 'lists', 'location'] as const) {
         expect(repositories[key]).toBeDefined();
       }
     }

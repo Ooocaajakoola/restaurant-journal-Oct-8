@@ -11,8 +11,15 @@ export async function loadProfile(ctx: SupabaseContext): Promise<ProfileRow> {
   if (existing) return existing;
 
   const ts = ctx.now().toISOString();
+  const signedUpAs = (await ctx.session.current())?.displayName?.trim();
   try {
-    return unwrap(await ctx.client.from('profiles').insert({ id: uid, created_at: ts, updated_at: ts }).select('*').single()) as ProfileRow;
+    return unwrap(
+      await ctx.client
+        .from('profiles')
+        .insert({ id: uid, ...(signedUpAs ? { display_name: signedUpAs } : {}), created_at: ts, updated_at: ts })
+        .select('*')
+        .single(),
+    ) as ProfileRow;
   } catch (err) {
     if (!isUniqueViolation(err)) throw err;
     return unwrap(await select()) as ProfileRow; // another tab created it first

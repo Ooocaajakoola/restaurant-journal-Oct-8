@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { newId } from '../../lib/id';
 import type { Repositories } from '../repositories';
+import { createAuthRepository } from './authRepository';
 import { createCityRepository } from './cityRepository';
 import type { SupabaseContext } from './context';
 import { createEntryRepository } from './entryRepository';
@@ -28,9 +29,7 @@ export function createSupabaseRepositories(client: SupabaseClient, options: Supa
   };
 
   return {
-    ready: async () => {
-      await ctx.session.ready();
-    },
+    auth: createAuthRepository(client, ctx.session),
     users: createUserRepository(ctx),
     cities: createCityRepository(ctx),
     places: createPlaceRepository(ctx),

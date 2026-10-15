@@ -1,5 +1,6 @@
 import { newId } from '../../lib/id';
 import type { Repositories } from '../repositories';
+import { createAuthRepository } from './authRepository';
 import { createCityRepository } from './cityRepository';
 import { MockDb, type MockContext } from './db';
 import { createEntryRepository } from './entryRepository';
@@ -31,7 +32,7 @@ export function createMockRepositories(options: MockOptions = {}): MockRepositor
   const ctx: MockContext = { db, now, newId: options.newId ?? newId };
 
   return {
-    ready: async () => {},
+    auth: createAuthRepository(ctx),
     users: createUserRepository(ctx),
     cities: createCityRepository(ctx),
     places: createPlaceRepository(ctx),

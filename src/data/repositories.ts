@@ -22,6 +22,33 @@ import type {
   Visibility,
 } from '../types';
 
+// ---------- Auth ----------
+
+export interface AuthUser {
+  id: Id;
+  email: string | null;
+  displayName: string | null;
+}
+
+export type SignUpResult =
+  | { status: 'signed-in'; user: AuthUser }
+  /** The account exists but must click the link in an email before signing in. */
+  | { status: 'confirm-email'; email: string };
+
+/** Errors thrown here carry a message that is safe to show to the user as-is. */
+export interface AuthRepository {
+  /** False for the demo data layer, which has a single built-in user and nothing to sign in to. */
+  readonly accounts: boolean;
+  /** The signed-in user, or null. */
+  getUser(): Promise<AuthUser | null>;
+  signUp(input: { email: string; password: string; displayName: string }): Promise<SignUpResult>;
+  signIn(email: string, password: string): Promise<AuthUser>;
+  signOut(): Promise<void>;
+  resendConfirmation(email: string): Promise<void>;
+  /** Called when the user signs in or out (including from another tab). Returns an unsubscribe function. */
+  onChange(listener: (user: AuthUser | null) => void): () => void;
+}
+
 // ---------- Users ----------
 
 export type UserSettingsPatch = Partial<Pick<User, 'displayName' | 'homeAirport' | 'defaultVisibility'>>;
@@ -203,11 +230,7 @@ export interface LocationRepository {
 // ---------- Bundle ----------
 
 export interface Repositories {
-  /**
-   * Resolves when the data layer can serve requests (e.g. a Supabase session exists) and rejects with a
-   * readable message if it can't. The app waits on this before rendering. The mock resolves immediately.
-   */
-  ready(): Promise<void>;
+  auth: AuthRepository;
   users: UserRepository;
   cities: CityRepository;
   places: PlaceRepository;

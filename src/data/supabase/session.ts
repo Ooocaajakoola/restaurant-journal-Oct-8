@@ -1,42 +1,44 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient, User } from '@supabase/supabase-js';
+import type { AuthUser } from '../repositories';
 
-export interface SessionManager {
-  /** Resolves to the current user's id, signing in anonymously the first time. */
-  ready(): Promise<string>;
+export class NotSignedInError extends Error {
+  constructor() {
+    super('Please sign in to continue.');
+    this.name = 'NotSignedInError';
+  }
 }
 
-const ANON_DISABLED =
-  'Anonymous sign-ins are switched off for this Supabase project. In the Supabase dashboard open ' +
-  'Authentication → Sign In / Providers and turn on "Allow anonymous sign-ins", then reload.';
+export interface SessionManager {
+  /** The signed-in user's id. Throws NotSignedInError when there is no session. */
+  ready(): Promise<string>;
+  current(): Promise<AuthUser | null>;
+}
+
+/** Anonymous sessions (from an earlier version of the app) are not accounts: treat them as signed out. */
+export const isAccount = (user: User) => !user.is_anonymous;
+
+export function toAuthUser(user: User): AuthUser {
+  const name = user.user_metadata?.display_name;
+  return { id: user.id, email: user.email ?? null, displayName: typeof name === 'string' ? name : null };
+}
 
 /**
- * Each browser gets its own private identity without a login screen (Supabase anonymous sign-in).
- * The session is stored by the Supabase client, so the same browser keeps the same identity.
+ * Reads the signed-in user from the Supabase client, which keeps the session in this browser and
+ * refreshes it. Signing in and out is handled by the auth repository and the login screen.
  */
 export function createSessionManager(client: SupabaseClient): SessionManager {
-  let pending: Promise<string> | null = null;
-
-  async function start(): Promise<string> {
-    const existing = await client.auth.getSession();
-    if (existing.error) throw new Error(existing.error.message);
-    if (existing.data.session) return existing.data.session.user.id;
-
-    const { data, error } = await client.auth.signInAnonymously();
-    if (error || !data.user) {
-      const text = `${error?.code ?? ''} ${error?.message ?? ''}`.toLowerCase();
-      if (text.includes('anonymous')) throw new Error(ANON_DISABLED);
-      throw new Error(error?.message ?? 'Could not start a session.');
-    }
-    return data.user.id;
+  async function current(): Promise<AuthUser | null> {
+    const { data, error } = await client.auth.getSession();
+    if (error) throw new Error(error.message);
+    return data.session && isAccount(data.session.user) ? toAuthUser(data.session.user) : null;
   }
 
   return {
-    ready() {
-      pending ??= start().catch((err: unknown) => {
-        pending = null; // let the user retry
-        throw err;
-      });
-      return pending;
+    current,
+    async ready() {
+      const user = await current();
+      if (!user) throw new NotSignedInError();
+      return user.id;
     },
   };
 }

@@ -64,6 +64,9 @@ function SettingsForm({ user }: { user: User }) {
   const setTheme = useUiStore((s) => s.setTheme);
 
   const entries = useAsyncData(() => repos.entries.list(), []);
+  const account = useAsyncData(() => repos.auth.getUser(), []);
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
 
   const [displayName, setDisplayName] = useState(user.displayName);
   const [homeAirport, setHomeAirport] = useState(user.homeAirport ?? '');
@@ -73,6 +76,17 @@ function SettingsForm({ user }: { user: User }) {
   const [error, setError] = useState<string | null>(null);
 
   const lastChange = (entries.data ?? []).reduce<string | null>((latest, e) => (!latest || e.updatedAt > latest ? e.updatedAt : latest), null);
+
+  async function handleSignOut() {
+    setSigningOut(true);
+    setSignOutError(null);
+    try {
+      await repos.auth.signOut(); // AuthGate notices and shows the sign-in screen
+    } catch (err) {
+      setSignOutError(err instanceof Error ? err.message : 'Could not sign out.');
+      setSigningOut(false);
+    }
+  }
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -97,6 +111,28 @@ function SettingsForm({ user }: { user: User }) {
       <PageHeader title="Settings" subtitle="Your profile, privacy defaults and appearance." />
 
       <div className="space-y-8">
+        {repos.auth.accounts && (
+          <section aria-labelledby="account-h">
+            <h2 id="account-h" className="mb-3 text-lg font-bold">
+              Account
+            </h2>
+            <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-line bg-surface p-4">
+              <p className="min-w-0">
+                <span className="block text-sm text-muted">Signed in as</span>
+                <span className="block truncate font-semibold">{account.data?.email ?? '…'}</span>
+              </p>
+              <Button onClick={() => void handleSignOut()} disabled={signingOut}>
+                {signingOut ? 'Signing out…' : 'Sign out'}
+              </Button>
+            </div>
+            {signOutError && (
+              <p role="alert" className="mt-2 text-danger">
+                {signOutError}
+              </p>
+            )}
+          </section>
+        )}
+
         <section aria-labelledby="appearance-h">
           <h2 id="appearance-h" className="mb-3 text-lg font-bold">
             Appearance

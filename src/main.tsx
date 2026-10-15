@@ -2,7 +2,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
-import { DataGate } from './components/layout/DataGate';
+import { AuthGate } from './components/layout/AuthGate';
 import { repositories } from './data';
 import { RepositoryProvider } from './hooks/useRepositories';
 import './index.css';
@@ -10,11 +10,11 @@ import './index.css';
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <RepositoryProvider repositories={repositories}>
-      <DataGate>
+      <AuthGate>
         <BrowserRouter>
           <App />
         </BrowserRouter>
-      </DataGate>
+      </AuthGate>
     </RepositoryProvider>
   </StrictMode>,
 );

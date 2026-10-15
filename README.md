@@ -2,7 +2,7 @@
 
 A mobile-first restaurant journal for pilots and other frequent travellers. Log a meal in about three taps, find it again by city, and share favourites by link.
 
-**Status: connected to Supabase.** Data is stored in a Supabase Postgres database behind a repository layer. With no Supabase settings the app falls back to localStorage demo data (see [Backend](#backend-supabase)). There are no payments and no analytics, and no login screen: each browser gets its own private identity through Supabase anonymous sign-in.
+**Status: connected to Supabase.** Data is stored in a Supabase Postgres database behind a repository layer. With no Supabase settings the app falls back to localStorage demo data (see [Backend](#backend-supabase)). You sign up and sign in with an email and password. There are no payments and no analytics.
 
 ## Stack
 
@@ -98,9 +98,16 @@ The database schema, security policies, photo bucket and catalogue seed live in 
 
 **How it picks a back end.** `src/data/index.ts` uses Supabase when both `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are set, and the localStorage mock otherwise. Set `VITE_DATA_SOURCE=mock` to force the mock. Nothing outside `src/data/` knows which one it got.
 
-**One manual step in the Supabase dashboard.** Turn on *Authentication → Sign In / Providers → Allow anonymous sign-ins*. Until you do, the app shows "Can't connect to your journal" with this instruction.
+**Accounts.** The first screen is Sign in / Create account (email + password, Supabase Auth). Settings shows who is signed in and has a Sign out button. Demo mode has no accounts and skips the login screen.
 
-**Identity and privacy.** On first load each browser signs in anonymously and gets its own `auth.uid()`. Row-level security means:
+**Two dashboard settings to know about** (Authentication in the Supabase dashboard; I can't change these for you):
+
+- **Confirm email** (Sign In / Providers → Email). It's **on** by default: new accounts must click an emailed link before they can sign in, and Supabase's built-in email sender allows only a few emails per hour. For testing, turn it **off** so sign-up logs you straight in. If you keep it on, add `http://localhost:5173` under URL Configuration → Redirect URLs (and set it as the Site URL), or the link in the email won't bring you back to the app.
+- **Anonymous sign-ins** aren't used any more and can stay off. A leftover anonymous session in a browser is treated as signed out.
+
+There's no "forgot password" flow yet.
+
+**Privacy.** Row-level security means:
 
 | Data | Who can read | Who can write |
 | --- | --- | --- |
@@ -109,7 +116,7 @@ The database schema, security policies, photo bucket and catalogue seed live in 
 | Lists | The owner, and anyone with the link while `share_enabled` | Only the owner |
 | Photo files (`entry-photos` bucket) | Anyone with the file's unguessable URL | Only the owner, in their own folder |
 
-Because there is no login, an anonymous identity lives in that browser. Clearing site data or switching browsers starts a fresh, empty journal, and the old data stays in the database but is unreachable. Adding real sign-in later (and linking the anonymous user to it) is the natural next step for cross-device sync.
+Your journal belongs to your account, so it follows you to any browser or device where you sign in.
 
 **Schema notes.** Ids are client-generated UUIDs, and every table has `created_at`/`updated_at`. A shared list copies each entry's rating onto the list item, so viewers see the rating without ever getting access to the entry. A list also stores a snapshot of its owner's name.
 
@@ -118,11 +125,11 @@ Because there is no login, an anonymous identity lives in that browser. Clearing
 ### Tests
 
 - `npm test` runs everything that doesn't need the network, including unit tests for the Supabase layer (row mapping, session handling, query helpers) and the shared repository contract against the mock.
-- `src/data/supabase/supabase.e2e.test.ts` runs the real Supabase repositories against your live project with two anonymous users: CRUD, photo upload, filters, per-user privacy, shared lists. It is skipped by default because it creates (and then deletes) data:
+- `src/data/supabase/supabase.e2e.test.ts` runs the real Supabase repositories against your live project with two throwaway accounts: sign-up, sign-out/in, CRUD, photo upload, filters, per-user privacy, shared lists. It needs **Confirm email** switched off, and is skipped by default because it creates data (it deletes the entries and lists it makes):
   ```bash
   SUPABASE_E2E=1 npm test -- supabase.e2e
   ```
-  Each run leaves a couple of empty anonymous users in Authentication → Users; delete them in the dashboard if you like.
+  Each run leaves two `e2e-…@example.com` users in Authentication → Users. Delete them in the dashboard when you're done (their data goes with them).
 
 ## Notes and limits
 

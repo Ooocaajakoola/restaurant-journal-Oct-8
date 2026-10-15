@@ -4,7 +4,9 @@
  *
  *   SUPABASE_E2E=1 npm test -- supabase.e2e
  *
- * Needs VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY in .env and "Allow anonymous sign-ins" enabled.
+ * Needs VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY in .env and "Confirm email" switched OFF in
+ * Supabase (Authentication -> Sign In / Providers -> Email), so test accounts can sign in at once.
+ * Each run creates two throwaway accounts (e2e-...@example.com); see the README for removing them.
  */
 import { createClient } from '@supabase/supabase-js';
 import type { Repositories } from '../repositories';
@@ -18,7 +20,9 @@ const enabled = !!process.env.SUPABASE_E2E && !!env.VITE_SUPABASE_URL && !!env.V
 // 1x1 transparent PNG
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
-/** A separate in-memory session per call, so each one is a different anonymous person. */
+const runId = Math.random().toString(36).slice(2, 10);
+
+/** A separate in-memory session per call, so each one is a different person. */
 function newPerson(): Repositories {
   const store = new Map<string, string>();
   const client = createClient(env.VITE_SUPABASE_URL!, env.VITE_SUPABASE_ANON_KEY!, {
@@ -34,6 +38,15 @@ function newPerson(): Repositories {
 describe.skipIf(!enabled)('Supabase end-to-end (live project)', () => {
   const ana = newPerson();
   const ben = newPerson();
+
+  async function register(repos: Repositories, name: string) {
+    const result = await repos.auth.signUp({ email: `e2e-${runId}-${name.toLowerCase()}@example.com`, password: `Pw-${runId}-123`, displayName: name });
+    if (result.status !== 'signed-in') {
+      throw new Error('Sign-up needs email confirmation. Turn "Confirm email" off in Supabase to run this test.');
+    }
+    return result.user;
+  }
+
   const created = { ana: [] as string[], anaLists: [] as string[], benLists: [] as string[] };
 
   afterAll(async () => {
@@ -42,9 +55,18 @@ describe.skipIf(!enabled)('Supabase end-to-end (live project)', () => {
     for (const id of created.benLists) await ben.lists.delete(id).catch(() => undefined);
   });
 
-  it('signs in anonymously and reads the shared catalogue', async () => {
-    await ana.ready();
-    await ben.ready();
+  it('signs up, signs out and back in, and reads the shared catalogue', async () => {
+    const user = await register(ana, 'Ana');
+    await register(ben, 'Ben');
+    expect(user.displayName).toBe('Ana');
+    expect((await ana.auth.getUser())?.id).toBe(user.id);
+
+    await ana.auth.signOut();
+    expect(await ana.auth.getUser()).toBeNull();
+    await expect(ana.entries.list()).rejects.toThrow(/sign in/i);
+    await expect(ana.auth.signIn(user.email!, 'wrong-password')).rejects.toThrow('Incorrect email or password.');
+    expect((await ana.auth.signIn(user.email!, `Pw-${runId}-123`)).id).toBe(user.id);
+
     expect((await ana.cities.list()).length).toBe(10);
     const nearby = await ana.places.listNearby({ lat: 51.5136, lng: -0.1365 }, { radiusKm: 5, limit: 10 });
     expect(nearby.map((p) => p.name)).toContain('Bao Alley');
@@ -56,6 +78,7 @@ describe.skipIf(!enabled)('Supabase end-to-end (live project)', () => {
     expect(await ana.cities.listVisited()).toEqual([]);
     const me = await ana.users.getCurrent();
     expect(me.defaultVisibility).toBe('private');
+    expect(me.displayName).toBe('Ana'); // the name chosen at sign-up
   });
 
   it('creates, reads, filters, updates and deletes an entry with dishes, tags and a photo', async () => {
@@ -156,11 +179,11 @@ describe.skipIf(!enabled)('Supabase end-to-end (live project)', () => {
   });
 
   it('updates the profile and the name shown on shared lists', async () => {
-    const me = await ana.users.updateCurrent({ displayName: 'E2E Ana', homeAirport: 'lhr', defaultVisibility: 'crew' });
-    expect(me).toMatchObject({ displayName: 'E2E Ana', homeAirport: 'LHR', defaultVisibility: 'crew' });
+    const me = await ana.users.updateCurrent({ displayName: 'Ana Updated', homeAirport: 'lhr', defaultVisibility: 'crew' });
+    expect(me).toMatchObject({ displayName: 'Ana Updated', homeAirport: 'LHR', defaultVisibility: 'crew' });
     const place = (await ana.places.search('sunrise'))[0]!;
     expect((await ana.entries.create({ placeId: place.id, rating: 3 }).then((e) => (created.ana.push(e.id), e))).visibility).toBe('crew');
     const sharedId = created.anaLists[1]!;
-    expect((await ben.lists.getShared(sharedId))!.owner.displayName).toBe('E2E Ana');
+    expect((await ben.lists.getShared(sharedId))!.owner.displayName).toBe('Ana Updated');
   });
 });
